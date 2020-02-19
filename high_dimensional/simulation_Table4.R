@@ -1,3 +1,7 @@
+## This file is to generate part of the results in Table 4 for high dimensional case.
+## The approximate run time is about 4 hours.
+
+rm(list=ls())
 library(grpreg)
 source("STV_linear_functions.R")
 Rcpp::sourceCpp("STV_linear_cpp.cpp")
