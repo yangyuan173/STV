@@ -1,3 +1,79 @@
+
+SoftThreshVarying <- function(z,y,w,rho=NULL,n_folds=5,w_grid=NULL){
+  z = as.matrix(z)
+  z = z[order(w),]
+  y = y[order(w)]
+  w = sort(w)
+  n = length(y)
+  if(is.null(rho)){
+    rho = 1/n^2 #penalty coefficient
+  }
+  if(is.null(w_grid)){
+    w_grid=w
+  }
+  q_n = STV_linear_cv(z,y,w,rho=rho, n_folds = n_folds,llk_fun = llk_linear_penal_Rcpp)
+  w_bounds = range(w)
+  B_grid = gen_basis_linear(w_grid, q_n = q_n, w_bounds = w_bounds)
+  B = gen_basis_linear(w, q_n = q_n, w_bounds = w_bounds)
+  gma_alpha = ini_gma(z,y,q_n)
+  gma_ini = gma_alpha$gma_ini
+  alpha = gma_alpha$alpha
+  STV_fit = optim(par = gma_ini, llk_linear_penal_Rcpp, z=z,y=y,q_n=q_n,B = B,alpha= alpha,rho=rho, method ="BFGS",control = list(maxit=200) )
+  STV_llk = STV_fit$value
+  STV_gma = matrix(STV_fit$par,nrow = q_n, nc = p)
+  STV_beta_grid = stv_beta_t_thre(STV_gma,q_n=q_n,alpha,B = B_grid)
+  STV_theta_grid = B_grid%*%STV_gma
+  STV_sd_grid = STV_sd3(y, z, B, STV_gma, alpha, B_grid)$sd_all
+  return(list(beta = STV_beta_grid, sds = STV_sd_grid, q_n = q_n, alpha = alpha, theta = STV_theta_grid))
+}
+
+STV_sd3 <-function(y, z, B, gma, alpha, B_grid, rho=0.001){
+  z = as.matrix(z)
+  theta = B%*%gma
+  BB = t(B)%*%B
+  n =  length(y)
+  n_grid = nrow(B_grid)
+  p = ncol(z)
+  zh = rep(0,n)
+  U = matrix(0, n, p)
+  for(j in 1:p){
+    zh = zh + as.vector(z[,j])*h_beta_t(epsi = 0.01, theta[,j], alpha[j])
+    U[,j] = as.vector(z[,j])*h1_fun(theta[,j], alpha[j],epsi = 0.01)
+  }
+  sigma2 = sum((y-zh)^2)/(n-1)
+  V = sapply(1:n, function(x) kronecker(U[x,],B[x,]))
+  D2 =  (-V%*%t(V) - rho * kronecker(diag(rep(1,p)),BB)) # t(V)%*%V is computationally singular.
+  #range(diag(D2))
+  D2_inv = MASS::ginv(D2,tol = 1e-4)
+  #range(-D2_inv)
+  #temp = D2_inv%*%V%*%t(V)%*%t(D2_inv)
+  temp = -D2_inv #%*%V%*%t(V)%*%t(D2_inv)
+  sd_all = matrix(0,n_grid,p)
+  for(j in 1:p){
+    ej = rep(0,p)
+    ej[j] = 1
+    sd_all[,j] = sqrt(sapply(1:n_grid, function(x) t(kronecker(ej,B_grid[x,]))%*%temp%*%kronecker(ej,B_grid[x,])))
+  }
+  return(list(sd_all=sd_all,sigma=sqrt(sigma2)))
+}
+
+plot_CI0 <-function(w_grid,fa,sds,main = NULL,ylab = expression(beta),xlab = "w",vw = NULL){
+  fl = fa-1.96*sds
+  fu = fa+1.96*sds
+  f0 = rep(0,length(w_grid))
+  ylim = range(f0,fa,fl,fu)+c(-0.001,0.001)
+  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey",las=1) 
+  lines(w_grid,fa,lty = 1,lwd=2)
+  lines(w_grid,fl,lty = 3,lwd=2)
+  lines(w_grid,fu,lty = 3,lwd=2)
+  if(!is.null(vw)){
+    for(v in vw){
+      abline(v = v, col = "grey")
+    }
+  }
+}
+
+
 mean_sd_table <- function(means,sds,digits=3,multiply = 1){
   means = as.matrix(means)
   sds = as.matrix(sds)
