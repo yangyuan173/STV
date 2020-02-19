@@ -1,3 +1,6 @@
+## This file is to demonstrate how our method works. 
+## Below is a toy example with three varying coefficients to be estimated.
+
 rm(list = ls())
 source('STV_linear_functions.R')
 source('loc_linear.R')
