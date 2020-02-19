@@ -1,3 +1,6 @@
+## This file is to generate simulation results for low dimensional case
+## The appeoximate run time is 4 hours.
+
 rm(list=ls())
 source('STV_linear_functions.R')
 source('loc_linear.R')
@@ -34,7 +37,7 @@ L = 4 #number of candidate bandwith h in the local polynomial method
 true_m = cbind(f1(w_grid),f2(w_grid),f3(w_grid)) #true coefficient functions
 for(seed in 1:200){
   cat("loop: ", seed,"\n")
-  sim_data = STV_linear_simulation(n, p, max_time = 3, err_sd_ratio =  err_sd_ratio, f_list, f_pos, seed = seed, z_var = z_var)
+  sim_data = STV_linear_simulation(n, p, max_time = 3, err_sd_ratio = 0.2, f_list, f_pos, seed = seed, cov_type = "AR1",z_rho = z_var, sigma=1)
   z = sim_data$z
   y = sim_data$y
   w = sim_data$w
@@ -64,10 +67,10 @@ for(seed in 1:200){
   
   #### B-spline method ####
   t1 = proc.time()[3]
-  regTV_fit = optim(par = gma_ini, llk_linear_reg, z=z,y=y,q_n=q_n,B = B,alpha= alpha, tau = tau,method ="BFGS",control = list(maxit=200) )
+  regTV_fit = optim(par = gma_ini, llk_linear_reg, z=z,y=y,q_n=q_n,B = B,method ="BFGS",control = list(maxit=200) )
   regTV_gma = matrix(regTV_fit$par, nrow = q_n, nc = p)
   regTV_beta_grid = B_grid%*%regTV_gma
-  regTV_sd_grid = regTV_sd(y, z, B, regTV_gma, B_grid)
+  regTV_sd_grid = regTV_sd_f(y, z, B, regTV_gma, B_grid)
   regTV_llk = regTV_fit$value
   regTV_ISE = apply((regTV_beta_grid - true_m)^2,2,mean)
   regTV_AISE = mean(regTV_ISE)
