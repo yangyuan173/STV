@@ -1,5 +1,5 @@
 ## This file is to generate simulation results for low dimensional case
-## The appeoximate run time is 4 hours.
+## The approximate run time is 4 hours.
 
 rm(list=ls())
 source('STV_linear_functions.R')
