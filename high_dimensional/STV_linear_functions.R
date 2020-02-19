@@ -160,14 +160,47 @@ plot_p0 <-function(w_grid,f0,fa,p0,main = NULL){
 }
 plot_CP <-function(w_grid,truth,STV_cp1,regTV_cp1,loc_cp1,ylab2){
   par(mar = c(5,5,2,5))
-  plot(w_grid,STV_cp1,ylim = c(0,1),type = "l",lwd = 2, lty = 1,ylab = "Coverage Probability",xlab = "w")
+  plot(w_grid,STV_cp1,ylim = c(0,1),type = "l",lwd = 2, lty = 1,ylab = "Coverage Probability",xlab = "w",las=1)
   abline(h = 0.95,lty=4)
   lines(w_grid,regTV_cp1,type = "l",lwd = 2, lty = 2)
   lines(w_grid,loc_cp1,type = "l",lwd = 2, lty = 3)
   par(new = T)
   plot(w_grid, truth, type="l",lwd = 2, col="grey", axes=F, xlab=NA, ylab=NA, cex=1.2)
-  axis(side = 4)
+  axis(side = 4,las=1)
   mtext(side = 4, line = 3, ylab2)
+}
+
+plot_CP2 <-function(w_grid,truth,STV_cp1,regTV_cp1,loc_cp1,ylab2){
+  par(mar = c(5,5,2,5))
+  plot(w_grid,STV_cp1,ylim = c(0,1),type = "l",lwd = 2, lty = 1,ylab = "Coverage Probability",xlab = "w",las=1)
+  abline(h = 0.95,lty=4)
+  lines(w_grid,regTV_cp1,type = "l",lwd = 2, lty = 1,col='red')
+  lines(w_grid,loc_cp1,type = "l",lwd = 2, lty = 1,col='blue')
+  par(new = T)
+  plot(w_grid, truth, type="l",lwd = 2, col="grey", axes=F, xlab=NA, ylab=NA, cex=1.2)
+  axis(side = 4,las=1)
+  mtext(side = 4, line = 3, ylab2)
+}
+
+plot_CP3 <-function(w_grid,truth,STV_cp1,ylab="Coverage Probability",ylab2,main="Method"){
+  par(mar = c(5,5,2,5))
+  plot(w_grid,STV_cp1,ylim = c(0,1),type = "l",lwd = 2, lty = 1,ylab = ylab,xlab = "w",las=1,main = main)
+  abline(h = 0.95,lty=4)
+  par(new = T)
+  plot(w_grid, truth, type="l",lwd = 2, col="grey", axes=F, xlab=NA, ylab=NA, cex=1.2)
+  axis(side = 4,las=1)
+  mtext(side = 4, line = 3, ylab2)
+}
+
+plot_mult_y <- function(w,ys, title = NULL,y_names = NULL,xlab = "w",ylab="value"){
+  library("reshape2")
+  library("ggplot2")
+  if(!is.null(y_names) & length(y_names) == ncol(ys)){
+    colnames(ys) = y_names
+  }
+  test_data = as.data.frame(cbind(ys,w))
+  test_data_long <- melt(test_data, id="w") 
+  ggplot(data=test_data_long,aes(x= w, y=value, colour=variable))+geom_line()+ggtitle(title)+xlab(xlab) + ylab(ylab)
 }
 
 
@@ -182,6 +215,47 @@ lm_beta_CI<-function(w,j,lm_fit2,intcpt = c(1,3,26)){
   beta.sd  = sapply(1:length(w), function(x) sqrt(w_w2[x,]%*%corr2[indx,indx]%*%w_w2[x,]))
   return(cbind(beta,beta-1.96*beta.sd,beta+1.96*beta.sd))
 }
+
+STV_real2 <- function(data, y_name, w_name, z_names, q_n = 8,test_indx=NULL){
+  data = data[order(data[,w_name]),]
+  if(is.null(test_indx)){
+    train_indx = 1:nrow(data)
+    w_test = data[,w_name]
+  }else{
+    train_indx = (1:nrow(data))[-test_indx]
+    w_test = data[test_indx,w_name]
+  }
+  y = data[train_indx,y_name]
+  w = data[train_indx,w_name]
+  z = as.matrix(data[train_indx,z_names])
+  n = length(y)
+  rho = 1/n^2
+  z = cbind(rep(1,n),z)
+  p = ncol(z)
+  w_all = data[,w_name]
+  w_bounds = range(w_all)
+  knot_set = quantile(w_all,(1:(q_n-4))/(q_n-3))
+  extra = min(diff(knot_set))
+  boundary = c(w_bounds[1]-extra,w_bounds[2]+extra)
+  B0 = splines::bs(w, knot=knot_set, intercept=TRUE, degree=3,Boundary.knots = boundary)
+  B = matrix(B0, nrow=length(w))
+  B0test = splines::bs(w_test, knot=knot_set, intercept=TRUE, degree=3,Boundary.knots = boundary)
+  B_test = matrix(B0test, nrow=length(w_test))
+  gma_alpha = ini_gma(z,y,q_n)
+  gma_ini = gma_alpha$gma_ini
+  alpha = gma_alpha$alpha
+  STV_fit = optim(par = gma_ini, llk_linear_penal_Rcpp, z=as.matrix(z),y=y,q_n=q_n,B = B,alpha= alpha,rho = rho, method ="BFGS",control = list(maxit=200) )
+  STV_gma = matrix(STV_fit$par,nrow = q_n, nc = p)
+  STV_theta = B%*%STV_gma
+  STV_sds = STV_sd(y, z, B, STV_gma, alpha, B,rho=rho)
+  #test
+  STV_beta = stv_beta_t_thre(STV_gma,q_n=q_n,alpha,B = B)
+  STV_theta_test = B_test%*%STV_gma
+  STV_sds_test = STV_sd(y, z, B, STV_gma, alpha, B_test,rho=rho)
+  STV_beta_test = stv_beta_t_thre(STV_gma,q_n=q_n,alpha,B = B_test)
+  return(list(STV_beta = STV_beta,STV_sds =  STV_sds, STV_theta=STV_theta,alpha = alpha, B = B, STV_fit = STV_fit, STV_gma= STV_gma,STV_beta_test = STV_beta_test,STV_sds_test =  STV_sds_test, STV_theta_test=STV_theta_test, B_test = B_test ))
+}
+
 
 STV_real <- function(data, y_name, w_name, z_names, q_n = 8,test_indx=NULL){
   data = data[order(data[,w_name]),]
@@ -223,12 +297,72 @@ STV_real <- function(data, y_name, w_name, z_names, q_n = 8,test_indx=NULL){
   return(list(STV_beta = STV_beta,STV_sds =  STV_sds, STV_theta=STV_theta,alpha = alpha, B = B, STV_fit = STV_fit, STV_gma= STV_gma,STV_beta_test = STV_beta_test,STV_sds_test =  STV_sds_test, STV_theta_test=STV_theta_test, B_test = B_test ))
 }
 
-plot_3R <-function(w_grid,f0,fa,fb,fc,main = NULL,ylab = expression(beta[1]),xlab = "w"){
+plot_3R <-function(w_grid,f0,fa,fb,fc,main = NULL,ylab = "Coefficient function",xlab = "w"){
   ylim = range(f0,fa,fb,fc)+c(-0.25,0.25)
-  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey") 
-  lines(w_grid,fa,lty = 2,lwd=2)
-  lines(w_grid,fb,lty = 2,lwd=2)
-  lines(w_grid,fc,lty = 2,lwd=2)
+  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey",las=1) 
+  lines(w_grid,fa,lty = 3,lwd=2)
+  lines(w_grid,fb,lty = 3,lwd=2)
+  lines(w_grid,fc,lty = 3,lwd=2)
+}
+
+## align three plots horizontally
+plot_CI4 <-function(w1,f1,CI1,w2,f2,CI2,w3,f3,CI3,main1 = NULL,main2=NULL,main3=NULL,ylab = "Coefficient function",xlab = "w",lwd=2,cex.axis=1,cex.main=1){
+  ylim = range(CI1,CI2,CI3)+c(-0.001,0.001)
+  CI_col = 'black'
+  par(mfrow=c(1,3))
+  par(mar= c(5.1, 4.1, 4.1, 0))# default
+  plot(w1,f1,main = main1,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=lwd,col=1,las=1,cex.axis=cex.axis,cex.main=cex.main) 
+  abline(h=0,col='grey')
+  lines(w1,CI1[,1],lty = 3,lwd=lwd,col=CI_col)
+  lines(w1,CI1[,2],lty = 3,lwd=lwd,col=CI_col)
+  par(mar= c(5.1, 3.6, 4.1, 0.5))
+  plot(w2,f2,main = main2,ylim = ylim,type = "l",ylab = " ",xlab = xlab,lty = 1,lwd=lwd,col=1,las=1,cex.axis=cex.axis,cex.main=cex.main) 
+  abline(h=0,col='grey')
+  lines(w2,CI2[,1],lty = 3,lwd=lwd,col=CI_col)
+  lines(w2,CI2[,2],lty = 3,lwd=lwd,col=CI_col)
+  plot(w3,f3,main = main3,ylim = ylim,type = "l",ylab = " ",xlab = xlab,lty = 1,lwd=lwd,col=1,las=1,cex.axis=cex.axis,cex.main=cex.main) 
+  abline(h=0,col='grey')
+  lines(w3,CI3[,1],lty = 3,lwd=lwd,col=CI_col)
+  lines(w3,CI3[,2],lty = 3,lwd=lwd,col=CI_col)
+  par(mfrow=c(1,1))
+  par(mar= c(5.1, 4.1, 4.1, 2.1))# default
+}
+
+## align two plots horizontally
+plot_CI3 <-function(w_grid,f1,CI1,f2,CI2,main1 = NULL,main2=NULL,ylab = "Coefficient function",xlab = "w",lwd=2,cex.axis=1,cex.main=1){
+  ylim = range(f1,f2,CI1,CI2)+c(-0.001,0.001)
+  CI_col = 'black'
+  par(mfrow=c(1,2))
+  par(mar= c(5.1, 4.1, 4.1, 0))# default
+  plot(w_grid,f1,main = main1,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=lwd,col=1,las=1,cex.axis=cex.axis,cex.main=cex.main) 
+  abline(h=0,col='grey')
+  lines(w_grid,CI1[,1],lty = 3,lwd=lwd,col=CI_col)
+  lines(w_grid,CI1[,2],lty = 3,lwd=lwd,col=CI_col)
+  par(mar= c(5.1, 3.6, 4.1, 0.5))
+  plot(w_grid,f2,main = main2,ylim = ylim,type = "l",ylab = " ",xlab = xlab,lty = 1,lwd=lwd,col=1,las=1,cex.axis=cex.axis,cex.main=cex.main) 
+  abline(h=0,col='grey')
+  lines(w_grid,CI2[,1],lty = 3,lwd=lwd,col=CI_col)
+  lines(w_grid,CI2[,2],lty = 3,lwd=lwd,col=CI_col)
+  par(mfrow=c(1,1))
+  par(mar= c(5.1, 4.1, 4.1, 2.1))# default
+}
+
+
+plot_CI2 <-function(w_grid,f0,fa,CI,main = NULL,ylab = "Coefficient function",xlab = "w",vw = NULL,lwd=2,cex=1,ylim=NULL){
+  fl = CI[,1]
+  fu = CI[,2]
+  if(is.null(ylim)){
+    ylim = range(f0,fa,fl,fu)+c(-0.001,0.001)
+  }
+  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey",las=1,cex.axis=cex) 
+  lines(w_grid,fa,lty = 1,lwd=lwd)
+  lines(w_grid,fl,lty = 3,lwd=lwd)
+  lines(w_grid,fu,lty = 3,lwd=lwd)
+  if(!is.null(vw)){
+    for(v in vw){
+      abline(v = v, col = "grey")
+    }
+  }
 }
 
 
@@ -236,7 +370,7 @@ plot_CI <-function(w_grid,f0,fa,CI,main = NULL,ylab = expression(beta),xlab = "w
   fl = CI[,1]
   fu = CI[,2]
   ylim = range(f0,fa)+c(-0.001,0.001)
-  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey") 
+  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey",las=1) 
   lines(w_grid,fa,lty = 1,lwd=1)
   lines(w_grid,fl,lty = 3,lwd=1)
   lines(w_grid,fu,lty = 3,lwd=1)
@@ -250,11 +384,52 @@ plot_CI <-function(w_grid,f0,fa,CI,main = NULL,ylab = expression(beta),xlab = "w
 
 plot_3M <-function(w_grid,f0,fa,fb,fc,main = NULL,ylab = expression(beta[1]),xlab = "w"){
   ylim = range(f0,fa,fb,fc)+c(-0.25,0.25)
-  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey") 
+  plot(w_grid,f0,main = main,ylim = ylim,type = "l",ylab = ylab,xlab = xlab,lty = 1,lwd=2,col="grey",las=1) 
   lines(w_grid,fa,lty = 2,lwd=2)
   lines(w_grid,fb,lty = 3,lwd=2)
   lines(w_grid,fc,lty = 4,lwd=2)
 }
+
+
+
+Real_data_cv <- function(z,y,w,rho, n_folds = 5, llk_fun){
+  N = length(y)
+  folds_i = sample(rep(1:n_folds, length.out = N))
+  h = c(6,8,10,12,15)
+  p = ncol(z)
+  L = length(h)
+  mse = rep(0,L)
+  cv_tmp = matrix(NA,nrow = n_folds, ncol = length(h))
+  for(fold in 1:n_folds){
+    test_i = which(folds_i == fold)
+    z_train = z[-test_i,]
+    z_test = z[test_i,]
+    y_train = y[-test_i]
+    y_test = y[test_i]
+    w_train = w[-test_i]
+    w_test = w[test_i]
+    K = length(w_test)
+    for(l in 1:L){
+      q_n = h[l]
+      B = gen_basis_linear(w, q_n = q_n, w_bounds = c(15,55))
+      gma_alpha = ini_gma(z,y,q_n)
+      gma_ini = gma_alpha$gma_ini
+      alpha = gma_alpha$alpha
+      B_train = B[-test_i,]
+      B_test = B[test_i,]
+      STV_fit = optim(par = gma_ini, llk_fun, z=z_train,y=y_train,q_n=h[l],B = B_train,alpha= alpha,rho=rho, method ="BFGS",control = list(maxit=50) )
+      gma =  matrix(STV_fit$par,nrow = q_n, nc = p)
+      theta = B_test%*%gma
+      beta = stv_beta_t_thre(gma,q_n=q_n,alpha,B = B_test)
+      y_hat = rowSums(sapply(1:p,function(x) z_test[,x]*beta[,x]))
+      cv_tmp[fold,l] = mean((y_test-y_hat)^2)
+    }
+  }
+  cv <- colMeans(cv_tmp)
+  h_opt = h[cv == min(cv)]
+  return(list(cv=cv,h_opt=h_opt))
+}
+
 
 
 STV_linear_cv <- function(z,y,w,rho, n_folds = 5, llk_fun){
@@ -317,6 +492,7 @@ TFPN <-function(estimate,truth){
 }
 
 # CI for one variable
+# sparse confidence interval
 STV_CI <- function(theta_grid, sd_grid, alpha){
   L = theta_grid-1.96*sd_grid
   R = theta_grid+1.96*sd_grid
@@ -360,7 +536,35 @@ STV_cp_all <- function(theta_grid, sd_grid, true_beta, alpha){
     zero_mat = cbind(zero_mat, as.numeric(zero_temp))
     LR_mat = cbind(LR_mat,LR)
   }
-  return(list(cp_mat=cp_mat,zero_mat=zero_mat))
+  return(list(cp_mat=cp_mat,zero_mat=zero_mat,LR_mat=LR_mat))
+}
+
+STV_sd2 <-function(y, z, B, gma, alpha, B_grid, rho=0.001){
+  z = as.matrix(z)
+  theta = B%*%gma
+  BB = t(B)%*%B
+  n =  length(y)
+  n_grid = nrow(B_grid)
+  p = ncol(z)
+  zh = rep(0,n)
+  U = matrix(0, n, p)
+  for(j in 1:p){
+    zh = zh + as.vector(z[,j])*h_beta_t(epsi = 0.01, theta[,j], alpha[j])
+    U[,j] = as.vector(z[,j])*h1_fun(theta[,j], alpha[j],epsi = 0.01)
+  }
+  sigma2 = sum((y-zh)^2)/(n-1)
+  V = sapply(1:n, function(x) kronecker(U[x,],B[x,]))
+  D2 =  (-V%*%t(V) - rho * kronecker(diag(rep(1,p)),BB)) # t(V)%*%V is computationally singular.
+  D2_inv = MASS::ginv(D2)
+  #temp = D2_inv%*%V%*%t(V)%*%t(D2_inv)
+  temp = D2_inv #%*%V%*%t(V)%*%t(D2_inv)
+  sd_all = matrix(0,n_grid,p)
+  for(j in 1:p){
+    ej = rep(0,p)
+    ej[j] = 1
+    sd_all[,j] = sqrt(sapply(1:n_grid, function(x) t(kronecker(ej,B_grid[x,]))%*%temp%*%kronecker(ej,B_grid[x,])))
+  }
+  return(list(sd_all=sd_all,sigma=sqrt(sigma2)))
 }
 
 STV_sd <-function(y, z, B, gma, alpha, B_grid, rho=0.001){
@@ -390,7 +594,8 @@ STV_sd <-function(y, z, B, gma, alpha, B_grid, rho=0.001){
   }
   return(sd_all)
 }
-regTV_sd <-function(y, z, B, gma, B_grid){
+
+regTV_sd_f <-function(y, z, B, gma, B_grid){
   theta = B%*%gma
   BB = t(B)%*%B
   n =  length(y)
@@ -569,7 +774,7 @@ reg_linear <- function(p,q_n,z,B){
   return(list(gma = gma, beta_t = beta_t))
 } 
 
-plot_all <- function(w,beta_t, title = NULL,y_names = NULL){
+plot_all <- function(w,beta_t, title = NULL,y_names = NULL,xlab = "w",ylab="value"){
   library("reshape2")
   library("ggplot2")
   if(!is.null(y_names) & length(y_names) == ncol(beta_t)){
@@ -577,7 +782,7 @@ plot_all <- function(w,beta_t, title = NULL,y_names = NULL){
   }
   test_data = as.data.frame(cbind(beta_t,w))
   test_data_long <- melt(test_data, id="w") 
-  ggplot(data=test_data_long,aes(x= w, y=value, colour=variable))+geom_line()+ggtitle(title)
+  ggplot(data=test_data_long,aes(x= w, y=value, colour=variable))+geom_line()+ggtitle(title)+xlab(xlab) + ylab(ylab)
 }
 
 plot_all_cp <- function(w,beta_t, title = NULL,y_names = NULL){
@@ -799,7 +1004,7 @@ h1_fun_simple <- function(z,alpha){
 }
 
 
-llk_linear_reg <-function(par,z,y,q_n,B,alpha,tau){
+llk_linear_reg <-function(par,z,y,q_n,B){
   nc = length(par)/q_n
   sum_zb = 0
   for(j in 1:nc){
@@ -927,6 +1132,9 @@ f4<-function(x){
 f5<-function(x){
   0.8*(-x^2+2)*(x>=sqrt(2))
 }
+f52<-function(x){
+  1.2*(-(x-2.5)^2+2)*(x>=2.5-sqrt(2))
+}
 
 f6<-function(x){
   2.5*sin(x)
@@ -939,6 +1147,11 @@ f7<-function(x){
 f8<-function(x){
   -0.8*(-x^2+2)*(x>=sqrt(2))
 }
+
+f82<-function(x){
+  -1.2*(-(x-2.5)^2+2)*(x>=2.5-sqrt(2))
+}
+
 
 f9<-function(x){
   -2.5*sin(x)
